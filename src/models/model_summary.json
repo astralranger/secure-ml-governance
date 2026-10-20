@@ -1,0 +1,10 @@
+{
+  "v1": {
+    "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v1.pkl",
+    "accuracy": 0.9667
+  },
+  "v2": {
+    "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v2.pkl",
+    "accuracy": 0.9
+  }
+}

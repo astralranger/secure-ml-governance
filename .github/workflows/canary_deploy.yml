@@ -1,0 +1,78 @@
+name: Canary Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      v2_weight:
+        description: "Canary traffic weight for v2 (0-100)"
+        required: true
+        default: "10"
+      promote_v2:
+        description: "Promote v2 to 100% after canary?"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd secure-ml-governance-platform
+          pip install -r requirements.txt
+
+      - name: Run pre-deploy quality gate
+        run: |
+          cd secure-ml-governance-platform
+          python -m src.models.train_models
+          python -m src.evaluation.pre_deploy_gate --artifact src/models/v2.pkl --minimum-accuracy 0.80 --maximum-demographic-parity-gap 0.20
+          pytest tests/test_model_quality.py -v
+
+      - name: Update canary traffic split
+        run: |
+          cd secure-ml-governance-platform
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          cfg_path = Path("config/model_config.json")
+          cfg = json.loads(cfg_path.read_text())
+          v2_weight = int("${{ github.event.inputs.v2_weight }}")
+          cfg["models"]["v2"]["weight"] = v2_weight
+          cfg["models"]["v1"]["weight"] = 100 - v2_weight
+          cfg["routing"]["strategy"] = "canary"
+          cfg_path.write_text(json.dumps(cfg, indent=2))
+          print(f"Canary set: v1={100 - v2_weight}%, v2={v2_weight}%")
+          PY
+
+      - name: Promote v2 to production (optional)
+        if: github.event.inputs.promote_v2 == 'true'
+        run: |
+          cd secure-ml-governance-platform
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          cfg_path = Path("config/model_config.json")
+          cfg = json.loads(cfg_path.read_text())
+          cfg["models"]["v1"]["weight"] = 0
+          cfg["models"]["v2"]["weight"] = 100
+          cfg["models"]["v2"]["status"] = "production"
+          cfg["models"]["v1"]["status"] = "retired"
+          cfg["routing"]["strategy"] = "canary"
+          cfg_path.write_text(json.dumps(cfg, indent=2))
+          print("Promoted v2 to 100% production traffic")
+          PY
+
+      - name: Verify routing config
+        run: |
+          cd secure-ml-governance-platform
+          cat config/model_config.json

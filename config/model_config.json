@@ -1,0 +1,43 @@
+{
+  "version": "1.0.0",
+  "models": {
+    "v1": {
+      "artifact": "src/models/v1.pkl",
+      "weight": 90,
+      "status": "production",
+      "label": "Model v1.0 (Logistic Regression)"
+    },
+    "v2": {
+      "artifact": "src/models/v2.pkl",
+      "weight": 10,
+      "status": "canary",
+      "label": "Model v2.0 (Random Forest)"
+    }
+  },
+  "routing": {
+    "strategy": "canary",
+    "shadow_mode": false,
+    "shadow_percentage": 100
+  },
+  "rollback": {
+    "enabled": true,
+    "error_rate_threshold": 0.05,
+    "latency_threshold_ms": 500,
+    "min_requests": 20,
+    "monitor_models": ["v2"]
+  },
+  "security": {
+    "jwt_secret_key": "CHANGE_ME_USE_A_LONG_RANDOM_SECRET_IN_PROD",
+    "rate_limit_per_minute": 60,
+    "api_key_env_var": "API_KEY",
+    "max_abs_feature_value": 1000.0,
+    "allowed_feature_names": ["sepal_length", "sepal_width", "petal_length", "petal_width"]
+  },
+  "audit": {
+    "db_path": "audit.db",
+    "enabled": true,
+    "drift_window_size": 100,
+    "drift_min_samples": 30,
+    "baseline_path": "src/models/iris_baseline.csv"
+  }
+}
