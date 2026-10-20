@@ -39,5 +39,10 @@
     "drift_window_size": 100,
     "drift_min_samples": 30,
     "baseline_path": "src/models/iris_baseline.csv"
+  },
+  "mlops": {
+    "feature_schema_version": "iris-inference-v1",
+    "model_metadata_path": "src/models/model_summary.json",
+    "mlflow_experiment_name": "secure-ml-governance"
   }
 }

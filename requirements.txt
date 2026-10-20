@@ -11,6 +11,9 @@ pandas>=2.1,<2.2
 numpy>=1.24,<2
 scipy>=1.11
 
+# MLOps lifecycle (optional locally; enabled by Docker Compose)
+mlflow>=3.0,<4
+
 # Audit database
 sqlalchemy>=2.0
 

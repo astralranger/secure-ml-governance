@@ -1,0 +1,36 @@
+services:
+  mlflow:
+    build: .
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    ports:
+      - "5001:5000"
+    volumes:
+      - mlflow-data:/mlflow
+
+  api:
+    build: .
+    command: >
+      sh -c "python -m src.models.train_models &&
+      gunicorn --bind 0.0.0.0:5000 --workers 2 src.api.app:app"
+    environment:
+      MLFLOW_ENABLED: "true"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: secure-ml-governance
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-for-real-deployments}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-password}
+      API_KEY: ${API_KEY:-}
+      AUDIT_DB_PATH: /app/runtime/audit.db
+    depends_on:
+      - mlflow
+    ports:
+      - "8000:5000"
+    volumes:
+      - audit-data:/app/runtime
+
+volumes:
+  mlflow-data:
+  audit-data:

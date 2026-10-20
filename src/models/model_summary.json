@@ -1,10 +1,61 @@
 {
-  "v1": {
-    "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v1.pkl",
-    "accuracy": 0.9667
+  "dataset": {
+    "baseline_sha256": "91b57d98f3a327800c85b1b97b1cd0f2d44a35db93ce20927bd10ce12ec9f5fa",
+    "feature_schema_version": "iris-inference-v1",
+    "features": [
+      "sepal_length",
+      "sepal_width",
+      "petal_length",
+      "petal_width"
+    ],
+    "name": "sklearn-iris",
+    "rows": 150
   },
-  "v2": {
-    "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v2.pkl",
-    "accuracy": 0.9
-  }
+  "models": {
+    "v1": {
+      "accuracy": 0.9667,
+      "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v1.pkl",
+      "artifact_sha256": "695ab039201228beb83358e17f5196ee7d62dfdeb6b59bc157f7107c71b134b0",
+      "feature_schema_version": "iris-inference-v1",
+      "quality_gate": {
+        "accuracy": 0.9667,
+        "artifact_loads": true,
+        "fairness": {},
+        "fairness_passed": true,
+        "model_artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v1.pkl",
+        "passed": true,
+        "per_class_accuracy": {
+          "class_0": 1.0,
+          "class_1": 0.9,
+          "class_2": 1.0
+        },
+        "reproducible": true,
+        "stress_failures": 0,
+        "stress_test_passed": true
+      }
+    },
+    "v2": {
+      "accuracy": 0.9,
+      "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v2.pkl",
+      "artifact_sha256": "4c43c1b1625565016682e0370806ac616fc725f72152af365f85e702df54721f",
+      "feature_schema_version": "iris-inference-v1",
+      "quality_gate": {
+        "accuracy": 0.9,
+        "artifact_loads": true,
+        "fairness": {},
+        "fairness_passed": true,
+        "model_artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v2.pkl",
+        "passed": true,
+        "per_class_accuracy": {
+          "class_0": 1.0,
+          "class_1": 0.9,
+          "class_2": 0.8
+        },
+        "reproducible": true,
+        "stress_failures": 0,
+        "stress_test_passed": true
+      }
+    }
+  },
+  "training_timestamp": "2026-10-20T15:16:36.800230+00:00"
 }

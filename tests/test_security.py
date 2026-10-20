@@ -149,3 +149,18 @@ def test_drift_endpoint_reports_insufficient_data(client, auth_headers):
     resp = client.get("/drift", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "insufficient_data"
+
+
+def test_prometheus_metrics_are_exposed_for_authenticated_monitoring(client, auth_headers):
+    resp = client.get("/metrics/prometheus", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "text/plain" in resp.content_type
+    assert "ml_governance_model_requests_total" in resp.get_data(as_text=True)
+
+
+def test_model_metadata_endpoint_returns_training_lineage(client, auth_headers):
+    resp = client.get("/models/metadata", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["dataset"]["feature_schema_version"] == "iris-inference-v1"
+    assert "v1" in body["models"]

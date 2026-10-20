@@ -27,6 +27,7 @@ from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_en
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .router import TrafficRouter
+from .prometheus import render_router_metrics
 from .security import (
     SecurityError,
     init_security,
@@ -36,6 +37,7 @@ from .security import (
     validate_prediction_payload,
 )
 from ..evaluation.drift_monitor import compute_drift
+from ..models.metadata import read_manifest
 
 # ---------------------------------------------------------------------------
 # Paths & configuration
@@ -161,12 +163,14 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
     # ---- audit database ------------------------------------------------- #
     audit_cfg = config.get("audit", {})
     if audit_cfg.get("enabled", True):
-        db_path = BASE_DIR / audit_cfg.get("db_path", "audit.db")
-        init_db(str(db_path))
+        configured_db_path = audit_cfg.get("db_path", "audit.db")
+        db_path = os.getenv("AUDIT_DB_PATH", str(BASE_DIR / configured_db_path))
+        init_db(db_path)
 
     baseline_path = BASE_DIR / audit_cfg.get("baseline_path", "src/models/iris_baseline.csv")
     drift_window_size = int(audit_cfg.get("drift_window_size", 100))
     drift_min_samples = int(audit_cfg.get("drift_min_samples", 30))
+    metadata_path = MODEL_DIR / "model_summary.json"
 
     # ---- routes --------------------------------------------------------- #
     allowed_features = sec_cfg.get(
@@ -201,6 +205,7 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
                 "status": "ok" if production_ready else "degraded",
                 "models_loaded": loaded,
                 "rollback_active": router.get_metrics()["rollback_active"],
+                "model_metadata_available": metadata_path.exists(),
             }
         ), 200
 
@@ -266,6 +271,24 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
     @require_auth
     def metrics():
         return jsonify(router.get_metrics()), 200
+
+    @app.get("/metrics/prometheus")
+    @require_auth
+    def prometheus_metrics():
+        """Prometheus-compatible metrics for dashboards and alert rules."""
+        return app.response_class(
+            render_router_metrics(router.get_metrics()),
+            mimetype="text/plain; version=0.0.4; charset=utf-8",
+        )
+
+    @app.get("/models/metadata")
+    @require_auth
+    def model_metadata():
+        """Expose reproducibility and lineage metadata without model binaries."""
+        manifest = read_manifest(metadata_path)
+        if not manifest:
+            return jsonify({"error": "metadata_not_found"}), 404
+        return jsonify(manifest), 200
 
     @app.get("/config")
     @require_auth

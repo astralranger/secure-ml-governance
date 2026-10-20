@@ -69,6 +69,24 @@ curl http://localhost:5000/predict `
 curl http://localhost:5000/metrics -H "Authorization: Bearer <ACCESS_TOKEN>"
 ```
 
+## One-command local MLOps stack
+
+Docker Compose starts the inference API and an MLflow tracking server. The API
+trains the example models on first start, logs lineage to MLflow, and serves on
+port `8000`; the MLflow UI is available on port `5001`.
+
+```bash
+# Set strong values before sharing the stack beyond your machine.
+$env:JWT_SECRET_KEY = "replace-with-a-long-random-secret"
+$env:API_KEY = "optional-service-key"
+docker compose up --build
+```
+
+Open `http://localhost:5001` to compare experiment runs. To enable MLflow while
+running Python directly, set `MLFLOW_ENABLED=true`; use
+`MLFLOW_REGISTER_MODEL=true` to also register a version under
+`MLFLOW_REGISTERED_MODEL_NAME` (default: `iris-governance-model`).
+
 ### Endpoints
 
 | Method | Path | Auth | Description |
@@ -77,8 +95,10 @@ curl http://localhost:5000/metrics -H "Authorization: Bearer <ACCESS_TOKEN>"
 | POST | `/predict` | JWT | Validated inference (canary/shadow routed) |
 | GET | `/health` | — | Service health + loaded models |
 | GET | `/metrics` | JWT | Traffic, error rate, latency, rollback state |
+| GET | `/metrics/prometheus` | JWT | Prometheus text metrics for dashboards and alerts |
 | GET | `/config` | JWT | Active routing configuration |
 | GET | `/drift` | JWT | Drift snapshot computed from successful audit events |
+| GET | `/models/metadata` | JWT | Model hashes, data fingerprint, schema, quality result, MLflow run ID |
 | POST | `/admin/rollback/reset` | JWT | Clear an active automated rollback |
 
 ### Demos
@@ -108,6 +128,9 @@ after it has been trained rather than on data collection or model research.
 
 * **Model versioning** — independent `v1` production and `v2` candidate
   artifacts make releases traceable and reversible.
+* **Experiment tracking and registry** — optional MLflow logging records
+  training parameters, metrics, signatures, model artifacts, and candidate
+  quality-gate status; registration can be enabled without changing code.
 * **Pre-deployment governance** — a runnable gate checks artifact integrity,
   accuracy, reproducibility, stress handling, and a configurable fairness
   proxy before a candidate can be promoted.

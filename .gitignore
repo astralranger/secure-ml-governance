@@ -19,3 +19,8 @@ src/models/*.pkl
 
 # Environment / secrets
 .env
+
+# Local MLflow tracking data
+mlruns/
+mlflow-data/
+runtime/
