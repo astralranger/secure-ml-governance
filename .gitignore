@@ -24,3 +24,9 @@ src/models/*.pkl
 mlruns/
 mlflow-data/
 runtime/
+
+# Generated downloads and local inspection
+data/adult.zip
+poster-preview.png
+
+.test-tmp*/

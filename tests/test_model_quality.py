@@ -5,21 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.datasets import load_iris
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
 
 from src.api.router import TrafficRouter
 from src.evaluation.drift_monitor import run_drift_check
 from src.evaluation.risk_evaluator import run_quality_gate
 
-FEATURE_NAMES = ["sepal_length", "sepal_width", "petal_length", "petal_width"]
-FULL_FEATURE_NAMES = {
-    "sepal_length": "sepal length (cm)",
-    "sepal_width": "sepal width (cm)",
-    "petal_length": "petal length (cm)",
-    "petal_width": "petal width (cm)",
-}
+from src.models.dataset import FEATURE_NAMES, EXAMPLE, training_split
+from src.models.train_models import MODEL_DIR, BASELINE_PATH
 
 
 class FailingModel:
@@ -29,36 +21,11 @@ class FailingModel:
         raise RuntimeError("model inference failure")
 
 
-@pytest.fixture
-def trained_models(tmp_path):
-    """Train two quick models and persist them to a temp directory."""
-    model_dir = tmp_path / "models"
-    model_dir.mkdir()
-    iris = load_iris(as_frame=True)
-    frame = iris.frame.copy()
-    X = frame[[FULL_FEATURE_NAMES[f] for f in FEATURE_NAMES]].values
-    y = frame["target"].values
-    Xtr, Xte, ytr, yte = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    m1 = LogisticRegression(max_iter=1000, random_state=1).fit(Xtr, ytr)
-    m2 = LogisticRegression(max_iter=1000, random_state=2).fit(Xtr, ytr)
-    p1 = model_dir / "v1.pkl"
-    p2 = model_dir / "v2.pkl"
-    import joblib
-
-    joblib.dump(m1, p1)
-    joblib.dump(m2, p2)
-    baseline = frame[[FULL_FEATURE_NAMES[f] for f in FEATURE_NAMES]].copy()
-    baseline.columns = FEATURE_NAMES
-    baseline.to_csv(model_dir / "baseline.csv", index=False)
-    return {
-        "v1": str(p1),
-        "v2": str(p2),
-        "baseline": str(model_dir / "baseline.csv"),
-        "Xte": Xte,
-        "yte": yte,
-    }
+@pytest.fixture(scope="module")
+def trained_models():
+    _, Xte, _, yte = training_split()
+    return {"v1": str(MODEL_DIR / "v1.pkl"), "v2": str(MODEL_DIR / "v2.pkl"),
+            "baseline": str(BASELINE_PATH), "Xte": Xte, "yte": yte}
 
 
 def make_config(models, rollback=None):
@@ -100,7 +67,7 @@ def test_router_canary_weights_approximate(trained_models):
     models = {name: joblib.load(p) for name, p in trained_models.items() if name in ("v1", "v2")}
     router = TrafficRouter(config, models)
     counts = {"v1": 0, "v2": 0}
-    features = np.array([5.1, 3.5, 1.4, 0.2], dtype=float)
+    features = np.array([EXAMPLE[f] for f in FEATURE_NAMES], dtype=object)
     for _ in range(1000):
         _, used = router.predict(features)
         counts[used] += 1
@@ -114,9 +81,10 @@ def test_router_shadow_mode_serves_v1(trained_models):
 
     config = make_config(trained_models)
     config["routing"]["shadow_mode"] = True
+    config["routing"]["shadow_percentage"] = 100
     models = {name: joblib.load(p) for name, p in trained_models.items() if name in ("v1", "v2")}
     router = TrafficRouter(config, models)
-    features = np.array([5.1, 3.5, 1.4, 0.2], dtype=float)
+    features = np.array([EXAMPLE[f] for f in FEATURE_NAMES], dtype=object)
     for _ in range(20):
         result, used = router.predict(features)
         assert used == "v1"
@@ -135,7 +103,7 @@ def test_router_rollback_on_repeated_errors(trained_models):
     config["models"]["v1"]["weight"] = 0
     config["models"]["v2"]["weight"] = 100
     router = TrafficRouter(config, {"v1": FailingModel(), "v2": FailingModel()})
-    features = np.array([5.1, 3.5, 1.4, 0.2], dtype=float)
+    features = np.array([EXAMPLE[f] for f in FEATURE_NAMES], dtype=object)
     for _ in range(5):
         router.predict(features)
     assert router._active_rollback is True, "rollback should activate on repeated errors"
@@ -158,7 +126,7 @@ def test_production_failures_do_not_rollback_candidate(trained_models):
     config["models"]["v1"]["weight"] = 100
     config["models"]["v2"]["weight"] = 0
     router = TrafficRouter(config, {"v1": FailingModel(), "v2": FailingModel()})
-    router.predict(np.array([5.1, 3.5, 1.4, 0.2]))
+    router.predict(np.array([EXAMPLE[f] for f in FEATURE_NAMES], dtype=object))
     assert router.get_metrics()["rollback_active"] is False
 
 
@@ -175,24 +143,22 @@ def test_shadow_failure_triggers_candidate_rollback(trained_models):
     import joblib
 
     router = TrafficRouter(config, {"v1": joblib.load(trained_models["v1"]), "v2": FailingModel()})
-    result, used = router.predict(np.array([5.1, 3.5, 1.4, 0.2]))
+    result, used = router.predict(np.array([EXAMPLE[f] for f in FEATURE_NAMES], dtype=object))
     assert used == "v1"
-    assert result["shadow"] is False
+    assert result["shadow"] is True
+    router._shadow_executor.submit(lambda: None).result(timeout=10)
     assert router.get_metrics()["v2"]["errors"] == 1
     assert router.get_metrics()["rollback_active"] is True
 
 
 def test_drift_detected_when_distribution_shifts(trained_models):
     baseline = pd.read_csv(trained_models["baseline"])
-    # Live data shifted far outside the training range
-    live = pd.DataFrame(
-        {
-            "sepal_length": np.random.uniform(50, 60, 100),
-            "sepal_width": np.random.uniform(50, 60, 100),
-            "petal_length": np.random.uniform(50, 60, 100),
-            "petal_width": np.random.uniform(50, 60, 100),
-        }
-    )
+    live = baseline.head(200).copy()
+    for feat in FEATURE_NAMES:
+        if pd.api.types.is_numeric_dtype(baseline[feat]):
+            live[feat] = baseline[feat].max() + 1000
+        else:
+            live[feat] = "UNSEEN_CATEGORY"
     report = run_drift_check(
         trained_models["baseline"], live, FEATURE_NAMES, alpha=0.05
     )
@@ -202,13 +168,7 @@ def test_drift_detected_when_distribution_shifts(trained_models):
 
 def test_drift_not_detected_for_similar_distribution(trained_models):
     baseline = pd.read_csv(trained_models["baseline"])
-    rng = np.random.default_rng(7)
-    live = pd.DataFrame(
-        {
-            feat: rng.normal(baseline[feat].mean(), baseline[feat].std(), 150)
-            for feat in FEATURE_NAMES
-        }
-    )
+    live = baseline.copy()
     report = run_drift_check(
         trained_models["baseline"], live, FEATURE_NAMES, alpha=0.05
     )

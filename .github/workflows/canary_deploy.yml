@@ -1,4 +1,4 @@
-name: Canary Deploy
+name: Prepare Canary Release
 
 on:
   workflow_dispatch:
@@ -16,6 +16,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      MLFLOW_ENABLED: "true"
+      MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+      MLFLOW_REGISTER_MODEL: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,26 +30,28 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd secure-ml-governance-platform
           pip install -r requirements.txt
 
       - name: Run pre-deploy quality gate
         run: |
-          cd secure-ml-governance-platform
           python -m src.models.train_models
           python -m src.evaluation.pre_deploy_gate --artifact src/models/v2.pkl --minimum-accuracy 0.80 --maximum-demographic-parity-gap 0.20
           pytest tests/test_model_quality.py -v
 
       - name: Update canary traffic split
+        env:
+          V2_WEIGHT: ${{ inputs.v2_weight }}
         run: |
-          cd secure-ml-governance-platform
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           cfg_path = Path("config/model_config.json")
           cfg = json.loads(cfg_path.read_text())
-          v2_weight = int("${{ github.event.inputs.v2_weight }}")
+          v2_weight = int(os.environ["V2_WEIGHT"])
+          if not 0 <= v2_weight <= 100:
+              raise ValueError("Canary weight must be between 0 and 100")
           cfg["models"]["v2"]["weight"] = v2_weight
           cfg["models"]["v1"]["weight"] = 100 - v2_weight
           cfg["routing"]["strategy"] = "canary"
@@ -56,7 +62,6 @@ jobs:
       - name: Promote v2 to production (optional)
         if: github.event.inputs.promote_v2 == 'true'
         run: |
-          cd secure-ml-governance-platform
           python - <<'PY'
           import json
           from pathlib import Path
@@ -74,5 +79,16 @@ jobs:
 
       - name: Verify routing config
         run: |
-          cd secure-ml-governance-platform
           cat config/model_config.json
+
+      - name: Upload reviewed release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: adult-governance-release
+          path: |
+            config/model_config.json
+            src/models/*.pkl
+            src/models/model_summary.json
+            src/models/adult_baseline.csv
+            mlflow-ci.db
+            mlruns/

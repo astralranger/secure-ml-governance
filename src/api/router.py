@@ -10,6 +10,7 @@ Responsibilities:
 from __future__ import annotations
 
 import random
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from collections import deque
@@ -33,10 +34,7 @@ class TrafficRouter:
 
         routing = config.get("routing", {})
         self.shadow_mode = bool(routing.get("shadow_mode", False))
-        # Earlier project configs used 0 while shadow mode meant "mirror every
-        # request". Preserve that behavior while making partial mirroring
-        # available with explicit values 1..100.
-        self.shadow_percentage = float(routing.get("shadow_percentage", 100)) or 100.0
+        self.shadow_percentage = float(routing.get("shadow_percentage", 100))
 
         rollback = config.get("rollback", {})
         self.rollback_enabled = bool(rollback.get("enabled", True))
@@ -58,6 +56,12 @@ class TrafficRouter:
             for name in metric_names
         }
         self._active_rollback = False
+        self._shadow_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ml-shadow")
+        self._shadow_slots = threading.BoundedSemaphore(32)
+        self.shadow_observer = None
+        self._shadow_comparisons = 0
+        self._shadow_disagreements = 0
+
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -124,7 +128,30 @@ class TrafficRouter:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
-    def predict(self, features: np.ndarray) -> Tuple[Dict[str, Any], str]:
+    def _run_shadow(self, features, production_prediction, context):
+        start = time.perf_counter()
+        error = False
+        try:
+            candidate = self._predict_with(self.models["v2"], features)
+            with self._lock:
+                self._shadow_comparisons += 1
+                self._shadow_disagreements += int(candidate.get("prediction") != production_prediction.get("prediction"))
+        except Exception as exc:
+            error = True
+            candidate = {"error": str(exc)}
+        try:
+            elapsed = (time.perf_counter() - start) * 1000
+            self._record("v2", elapsed, error)
+            if self._should_rollback("v2"):
+                self._activate_rollback()
+            if self.shadow_observer:
+                self.shadow_observer({**context, "model_version": "v2", "prediction": candidate,
+                                      "latency_ms": elapsed, "shadow": True, "error": error,
+                                      "http_status": 503 if error else 200})
+        finally:
+            self._shadow_slots.release()
+
+    def predict(self, features: np.ndarray, audit_context=None) -> Tuple[Dict[str, Any], str]:
         """Route one inference request.
 
         Returns (result, model_used). result contains the prediction, the
@@ -146,19 +173,18 @@ class TrafficRouter:
             if (
                 self.shadow_mode
                 and model_name == "v1"
+                and not self._active_rollback
                 and "v2" in self.models
                 and random.random() < self.shadow_percentage / 100
             ):
-                shadow_start = time.perf_counter()
-                try:
-                    self._predict_with(self.models["v2"], features)
-                    shadow = True
-                    self._record("v2", (time.perf_counter() - shadow_start) * 1000.0, False)
-                except Exception:
-                    # Shadow failures must not affect the live response
-                    self._record("v2", (time.perf_counter() - shadow_start) * 1000.0, True)
-                if self._should_rollback("v2"):
-                    self._activate_rollback()
+                # Bounded submission prevents shadow load from holding up production.
+                if self._shadow_slots.acquire(blocking=False):
+                    try:
+                        self._shadow_executor.submit(self._run_shadow, features.copy(), dict(prediction), dict(audit_context or {}))
+                        shadow = True
+                    except Exception:
+                        self._shadow_slots.release()
+
         except Exception as exc:  # noqa: BLE001 - record and return a safe error
             error = True
             prediction = {"error": str(exc)}
@@ -196,12 +222,17 @@ class TrafficRouter:
             out["rollback_active"] = self._active_rollback
             out["weights"] = dict(self.weights)
             out["shadow_mode"] = self.shadow_mode
+            out["shadow_comparisons"] = self._shadow_comparisons
+            out["shadow_disagreements"] = self._shadow_disagreements
         return out
 
     def reset_rollback(self) -> None:
         """Manually clear an active rollback (e.g., after a hotfix deploy)."""
         with self._lock:
             self._active_rollback = False
+            for name in self.monitored_models:
+                if name in self._metrics:
+                    self._metrics[name] = {"requests": 0, "errors": 0, "latencies": deque(maxlen=1000)}
 
     def set_weights(self, weights: Dict[str, float]) -> None:
         """Dynamically re-balance canary weights at runtime (zero-downtime)."""

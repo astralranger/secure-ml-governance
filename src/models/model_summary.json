@@ -1,33 +1,74 @@
 {
   "dataset": {
-    "baseline_sha256": "91b57d98f3a327800c85b1b97b1cd0f2d44a35db93ce20927bd10ce12ec9f5fa",
-    "feature_schema_version": "iris-inference-v1",
-    "features": [
-      "sepal_length",
-      "sepal_width",
-      "petal_length",
-      "petal_width"
+    "baseline_sha256": "95cec815eb3f7a2a4f29162c76be082f51e859d18a71dcaf669325c2f4b219af",
+    "excluded_predictors": [
+      "race",
+      "sex"
     ],
-    "name": "sklearn-iris",
-    "rows": 150
+    "feature_schema_version": "adult-income-v1",
+    "features": [
+      "age",
+      "workclass",
+      "fnlwgt",
+      "education",
+      "education_num",
+      "marital_status",
+      "occupation",
+      "relationship",
+      "race",
+      "sex",
+      "capital_gain",
+      "capital_loss",
+      "hours_per_week",
+      "native_country"
+    ],
+    "name": "UCI Adult Census Income",
+    "rows": 26048,
+    "source": "https://archive.ics.uci.edu/dataset/2/adult",
+    "source_sha256": {
+      "adult.data": "5b00264637dbfec36bdeaab5676b0b309ff9eb788d63554ca0a249491c86603d",
+      "adult.test": "a2a9044bc167a35b2361efbabec64e89d69ce82d9790d2980119aac5fd7e9c05"
+    },
+    "split": {
+      "fit": 26048,
+      "official_test": 16281,
+      "validation": 6513
+    },
+    "target_labels": {
+      "0": "<=50K",
+      "1": ">50K"
+    }
+  },
+  "library_versions": {
+    "numpy": "2.3.3",
+    "pandas": "2.3.2",
+    "scikit-learn": "1.7.2"
   },
   "models": {
     "v1": {
-      "accuracy": 0.9667,
-      "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v1.pkl",
-      "artifact_sha256": "695ab039201228beb83358e17f5196ee7d62dfdeb6b59bc157f7107c71b134b0",
-      "feature_schema_version": "iris-inference-v1",
+      "accuracy": 0.8557,
+      "artifact": "src/models/v1.pkl",
+      "artifact_sha256": "7e27eb9700d6c949197e2fd37b6fa82240322befe7f93d497e14b7f0b1f1ce82",
+      "feature_schema_version": "adult-income-v1",
+      "mlflow_model_uri": "models:/m-abfebfb42d0b432cadc96157a7472b01",
+      "mlflow_model_version": 1,
+      "mlflow_registered_model": "adult-governance-model",
+      "mlflow_run_id": "57431f632bbc46cab8e6d8de38f34e98",
+      "official_test_accuracy": 0.8511,
       "quality_gate": {
-        "accuracy": 0.9667,
+        "accuracy": 0.8557,
         "artifact_loads": true,
-        "fairness": {},
+        "fairness": {
+          "demographic_parity_gap": 0.1715,
+          "group_0_positive_rate": 0.0834,
+          "group_1_positive_rate": 0.2549
+        },
         "fairness_passed": true,
-        "model_artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v1.pkl",
+        "model_artifact": "src/models/v1.pkl",
         "passed": true,
         "per_class_accuracy": {
-          "class_0": 1.0,
-          "class_1": 0.9,
-          "class_2": 1.0
+          "class_0": 0.9331,
+          "class_1": 0.6116
         },
         "reproducible": true,
         "stress_failures": 0,
@@ -35,21 +76,29 @@
       }
     },
     "v2": {
-      "accuracy": 0.9,
-      "artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v2.pkl",
-      "artifact_sha256": "4c43c1b1625565016682e0370806ac616fc725f72152af365f85e702df54721f",
-      "feature_schema_version": "iris-inference-v1",
+      "accuracy": 0.8657,
+      "artifact": "src/models/v2.pkl",
+      "artifact_sha256": "db46ed93ebf838b770ac7b258614fffc14e4d9119b7e94c7c2ffcaf561e9209d",
+      "feature_schema_version": "adult-income-v1",
+      "mlflow_model_uri": "models:/m-1ec6f599f58f4b3fb711b9d168c6a229",
+      "mlflow_model_version": 2,
+      "mlflow_registered_model": "adult-governance-model",
+      "mlflow_run_id": "1e6818d63c31448ea5aaaa99fa363c97",
+      "official_test_accuracy": 0.8632,
       "quality_gate": {
-        "accuracy": 0.9,
+        "accuracy": 0.8657,
         "artifact_loads": true,
-        "fairness": {},
+        "fairness": {
+          "demographic_parity_gap": 0.1762,
+          "group_0_positive_rate": 0.07,
+          "group_1_positive_rate": 0.2462
+        },
         "fairness_passed": true,
-        "model_artifact": "C:\\The Sketchbook\\MLOPS\\secure-ml-governance-platform\\src\\models\\v2.pkl",
+        "model_artifact": "src/models/v2.pkl",
         "passed": true,
         "per_class_accuracy": {
-          "class_0": 1.0,
-          "class_1": 0.9,
-          "class_2": 0.8
+          "class_0": 0.9464,
+          "class_1": 0.611
         },
         "reproducible": true,
         "stress_failures": 0,
@@ -57,5 +106,5 @@
       }
     }
   },
-  "training_timestamp": "2026-10-20T15:16:36.800230+00:00"
+  "training_timestamp": "2026-10-29T17:28:45.589423+00:00"
 }

@@ -4,17 +4,24 @@ services:
     command: >
       mlflow server --host 0.0.0.0 --port 5000
       --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
+      --serve-artifacts --artifacts-destination /mlflow/artifacts
+      --allowed-hosts "localhost:*,127.0.0.1:*,mlflow:5000"
     ports:
       - "5001:5000"
     volumes:
       - mlflow-data:/mlflow
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   api:
     build: .
     command: >
       sh -c "python -m src.models.train_models &&
-      gunicorn --bind 0.0.0.0:5000 --workers 2 src.api.app:app"
+      python -m src.evaluation.pre_deploy_gate &&
+      gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4 src.api.app:app"
     environment:
       MLFLOW_ENABLED: "true"
       MLFLOW_TRACKING_URI: http://mlflow:5000
@@ -22,15 +29,52 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-for-real-deployments}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-password}
-      API_KEY: ${API_KEY:-}
+      API_KEY: ${API_KEY:-local-monitoring-key-change-me}
       AUDIT_DB_PATH: /app/runtime/audit.db
     depends_on:
-      - mlflow
+      mlflow:
+        condition: service_healthy
     ports:
       - "8000:5000"
     volumes:
       - audit-data:/app/runtime
 
+  monitoring-config:
+    build: .
+    profiles: [monitoring]
+    command: python -m src.api.monitoring_config
+    environment:
+      API_KEY: ${API_KEY:-local-monitoring-key-change-me}
+    volumes:
+      - monitoring-config:/monitoring
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    command: --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      monitoring-config:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - monitoring-config:/etc/prometheus:ro
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: [monitoring]
+    depends_on: [prometheus]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
 volumes:
   mlflow-data:
   audit-data:
+  monitoring-config:

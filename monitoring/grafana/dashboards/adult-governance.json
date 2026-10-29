@@ -1,0 +1,123 @@
+{
+  "uid": "adult-governance",
+  "title": "Adult Income - Secure ML Governance",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests per model",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "ml_governance_model_requests_total",
+          "refId": "A",
+          "legendFormat": "{{model_version}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Errors per model",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "ml_governance_model_errors_total",
+          "refId": "A",
+          "legendFormat": "{{model_version}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Average latency (ms)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "ml_governance_model_average_latency_ms",
+          "refId": "A",
+          "legendFormat": "{{model_version}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Rollback active",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "ml_governance_rollback_active",
+          "refId": "A",
+          "legendFormat": "{{model_version}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Configured traffic weight",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "ml_governance_model_traffic_weight",
+          "refId": "A",
+          "legendFormat": "{{model_version}}"
+        }
+      ]
+    }
+  ]
+}

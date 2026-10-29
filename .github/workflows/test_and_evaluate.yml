@@ -9,6 +9,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      MLFLOW_ENABLED: "true"
+      MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+      MLFLOW_REGISTER_MODEL: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -19,15 +23,24 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd secure-ml-governance-platform
           pip install -r requirements.txt
 
       - name: Train model artifacts
         run: |
-          cd secure-ml-governance-platform
           python -m src.models.train_models
 
       - name: Run QA, risk, and security tests
         run: |
-          cd secure-ml-governance-platform
           pytest tests/ -v --cov=src --cov-report=term-missing
+
+      - name: Enforce candidate admission
+        run: python -m src.evaluation.pre_deploy_gate
+
+      - name: Upload training lineage
+        uses: actions/upload-artifact@v4
+        with:
+          name: adult-training-lineage
+          path: |
+            src/models/model_summary.json
+            mlflow-ci.db
+            mlruns/

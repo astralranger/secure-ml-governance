@@ -11,22 +11,18 @@ import pytest
 
 from src.api.security import SecurityError, validate_prediction_payload
 
-VALID = {
-    "sepal_length": 5.1,
-    "sepal_width": 3.5,
-    "petal_length": 1.4,
-    "petal_width": 0.2,
-}
-
+from src.models.dataset import EXAMPLE
+VALID = EXAMPLE.copy()
 
 def test_valid_payload_returns_clean_features():
     out = validate_prediction_payload(VALID)
     assert out == VALID
-    assert all(isinstance(v, float) for v in out.values())
+    assert isinstance(out["age"], int)
+    assert isinstance(out["workclass"], str)
 
 
 def test_missing_feature_rejected():
-    payload = {k: v for k, v in VALID.items() if k != "sepal_width"}
+    payload = {k: v for k, v in VALID.items() if k != "workclass"}
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
 
@@ -38,42 +34,42 @@ def test_unknown_feature_rejected():
 
 
 def test_null_feature_rejected():
-    payload = dict(VALID, sepal_width=None)
+    payload = dict(VALID, age=None)
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
 
 
 def test_wrong_type_rejected():
-    payload = dict(VALID, sepal_length="not-a-number")
+    payload = dict(VALID, age="not-a-number")
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
 
 
 def test_nan_rejected():
-    payload = dict(VALID, sepal_length=float("nan"))
+    payload = dict(VALID, age=float("nan"))
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
 
 
 def test_inf_rejected():
-    payload = dict(VALID, sepal_length=float("inf"))
+    payload = dict(VALID, age=float("inf"))
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
 
 
 def test_negative_inf_rejected():
-    payload = dict(VALID, petal_width=float("-inf"))
+    payload = dict(VALID, capital_loss=float("-inf"))
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
 
 
 def test_out_of_bounds_rejected():
-    payload = dict(VALID, sepal_length=1e6)
+    payload = dict(VALID, age=1e6)
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
 
 
-def test_constant_feature_vector_rejected():
+def test_numeric_values_in_categorical_fields_rejected():
     payload = {k: 7.0 for k in VALID}
     with pytest.raises(SecurityError):
         validate_prediction_payload(payload)
@@ -86,9 +82,9 @@ def test_non_dict_body_rejected():
 
 def test_boundary_values_accepted():
     """Values at the edge of the allowed range should pass."""
-    payload = dict(VALID, sepal_length=999.9, petal_width=-999.9)
+    payload = dict(VALID, age=100, capital_loss=99999)
     out = validate_prediction_payload(payload)
-    assert out["sepal_length"] == 999.9
+    assert out["age"] == 100
 
 
 def test_predict_endpoint_requires_auth(client):
@@ -101,7 +97,7 @@ def test_predict_endpoint_requires_auth(client):
 
 
 def test_predict_rejects_adversarial_payload(client, auth_headers):
-    payload = dict(VALID, sepal_length=float("nan"))
+    payload = dict(VALID, age=float("nan"))
     resp = client.post(
         "/predict",
         json=payload,
@@ -162,5 +158,11 @@ def test_model_metadata_endpoint_returns_training_lineage(client, auth_headers):
     resp = client.get("/models/metadata", headers=auth_headers)
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body["dataset"]["feature_schema_version"] == "iris-inference-v1"
+    assert body["dataset"]["feature_schema_version"] == "adult-income-v1"
     assert "v1" in body["models"]
+
+
+def test_config_does_not_expose_signing_secret(client, auth_headers):
+    response = client.get("/config", headers=auth_headers)
+    assert response.status_code == 200
+    assert "jwt_secret_key" not in response.json["security"]

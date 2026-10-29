@@ -13,4 +13,4 @@ COPY . .
 EXPOSE 5000
 
 # Run with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "src.api.app:app"]
+CMD ["sh", "-c", "python -m src.models.train_models && python -m src.evaluation.pre_deploy_gate && gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4 src.api.app:app"]

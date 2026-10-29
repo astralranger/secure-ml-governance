@@ -4,8 +4,8 @@ Responsibilities:
   * JWT authentication for protected inference routes
   - API-key / IP based rate limiting (Flask-Limiter)
   * Strict schema validation of inference payloads (Pydantic)
-  * Adversarial input checks: out-of-bounds values, NaN/Inf, extreme magnitudes,
-    constant probe vectors, and oversized payloads
+  * Field-specific numeric bounds, strict integer types, categorical allowlists,
+    and oversized payload checks
 """
 
 from __future__ import annotations
@@ -14,32 +14,50 @@ import os
 from functools import wraps
 from typing import Any, Dict
 
-import numpy as np
 from flask import Request, current_app, jsonify, request
 from flask_jwt_extended import JWTManager, verify_jwt_in_request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import Field, ValidationError
 
 
 # ---------------------------------------------------------------------------
-# Schema: strict validation of the Iris inference payload
+# Schema: strict validation of the Adult income inference payload
 # ---------------------------------------------------------------------------
-class PredictionInput(BaseModel):
-    sepal_length: float = Field(..., description="sepal length (cm)")
-    sepal_width: float = Field(..., description="sepal width (cm)")
-    petal_length: float = Field(..., description="petal length (cm)")
-    petal_width: float = Field(..., description="petal width (cm)")
+from pydantic import create_model, model_validator
+from ..models.dataset import FEATURE_NAMES, NUMERIC_BOUNDS, CATEGORIES
 
-    # Reject any undeclared fields (strict schema)
-    model_config = {"extra": "forbid"}
 
-    @field_validator("*")
-    @classmethod
-    def _must_be_finite(cls, v: Any) -> float:
-        if v is None or not np.isfinite(float(v)):
-            raise ValueError("must be a finite number (no NaN / Inf / null)")
-        return float(v)
+@model_validator(mode="before")
+@classmethod
+def _validate_categories(cls, values):
+    if not isinstance(values, dict):
+        raise ValueError("Expected a JSON object")
+    values = dict(values)
+    for field, categories in CATEGORIES.items():
+        if field not in values:
+            continue
+        value = values[field]
+        # UCI '?' is a documented missing value, imputed by the fitted pipeline.
+        if value is None or value == "?":
+            if field not in {"workclass", "occupation", "native_country"}:
+                raise ValueError(f"{field} cannot be missing")
+            values[field] = None
+        elif not isinstance(value, str) or value.strip() not in categories:
+            raise ValueError(f"Unsupported {field} category")
+        else:
+            values[field] = value.strip()
+    return values
+
+
+PredictionInput = create_model(
+    "PredictionInput",
+    __config__={"extra": "forbid"},
+    __validators__={"categories": _validate_categories},
+    **{field: (int, Field(..., strict=True, ge=bounds[0], le=bounds[1]))
+       for field, bounds in NUMERIC_BOUNDS.items()},
+    **{field: (str | None, ...) for field in CATEGORIES},
+)
 
 
 class SecurityError(Exception):
@@ -99,19 +117,13 @@ def require_auth(fn):
 def validate_prediction_payload(
     payload: Dict[str, Any],
     allowed_features=None,
-    max_abs_value: float = 1000.0,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     """Validate and sanitize an inference payload.
 
     Returns a clean feature dict. Raises SecurityError on any validation or
     adversarial failure.
     """
-    allowed_features = allowed_features or [
-        "sepal_length",
-        "sepal_width",
-        "petal_length",
-        "petal_width",
-    ]
+    allowed_features = allowed_features or FEATURE_NAMES
 
     if not isinstance(payload, dict):
         raise SecurityError("Request body must be a JSON object", 400)
@@ -137,32 +149,8 @@ def validate_prediction_payload(
     features = validated.model_dump()
 
     # Adversarial heuristics
-    _adversarial_scan(features, max_abs_value=max_abs_value)
+    # Per-field bounds and categorical allowlists are enforced by the Adult schema.
     return features
-
-
-def _adversarial_scan(features: Dict[str, float], max_abs_value: float = 1000.0) -> None:
-    """Deep adversarial checks that run after schema validation passes.
-
-    Checks:
-      * extreme magnitudes (numerical instability / potential DoS)
-      * constant feature vectors (model-boundary probing)
-    """
-    values = list(features.values())
-    if not values:
-        return
-
-    max_abs = max(abs(v) for v in values)
-    if max_abs > max_abs_value:
-        raise SecurityError(
-            f"Feature magnitude {max_abs:.2f} exceeds allowed bound "
-            f"{max_abs_value}", 400
-        )
-
-    if len(values) > 1 and len(set(values)) == 1:
-        raise SecurityError(
-            "Constant feature vector rejected (possible adversarial probe)", 400
-        )
 
 
 def parse_json_body(request: Request) -> Dict[str, Any]:

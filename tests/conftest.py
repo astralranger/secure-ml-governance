@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 
 import pytest
 
@@ -11,13 +10,13 @@ from src.api.app import create_app, init_db
 
 
 @pytest.fixture
-def app():
-    fd, db_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+def app(tmp_path):
+    db_path = str(tmp_path / "adult-audit.db")
     application = create_app()
     application.config["TESTING"] = True
     init_db(db_path)
     yield application
+    application.extensions["traffic_router"]._shadow_executor.shutdown(wait=True)
     # Dispose the SQLAlchemy engine so Windows can release the SQLite file
     import src.api.app as app_module
 

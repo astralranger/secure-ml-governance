@@ -53,7 +53,7 @@ def _predict_safe(model, x: np.ndarray):
 def _stress_vector_handled(model, x: np.ndarray) -> bool:
     """A stress vector is 'handled' when the model either predicts cleanly or
     rejects non-finite input gracefully. Crashing on finite input is a failure."""
-    non_finite = bool(np.isnan(x).any() or np.isinf(x).any())
+    non_finite = any(isinstance(v, (float, np.floating)) and not np.isfinite(v) for v in x)
     try:
         model.predict(x.reshape(1, -1))
         return True
@@ -69,6 +69,7 @@ def evaluate_model(
     sensitive: Optional[np.ndarray] = None,
     artifact_path: str = "",
     max_demographic_parity_gap: Optional[float] = None,
+    minimum_accuracy: float = 0.80,
 ) -> RiskReport:
     """Run the full QA / risk gate suite on a candidate model."""
 
@@ -117,13 +118,14 @@ def evaluate_model(
     # security gate blocks them before they reach the model. Only finite inputs
     # failing (or a total crash with no rejection) count as stress failures.
     stress_failures = 0
-    stress_vectors = [
-        np.array([0.0, 0.0, 0.0, 0.0], dtype=float),
-        np.array([1000.0, 1000.0, 1000.0, 1000.0], dtype=float),
-        np.array([-1000.0, -1000.0, -1000.0, -1000.0], dtype=float),
-        np.array([np.nan, 1.0, 1.0, 1.0], dtype=float),
-        np.array([np.inf, 1.0, 1.0, 1.0], dtype=float),
-    ]
+    probe = np.asarray(X_test[0], dtype=object)
+    numeric_positions = [i for i, value in enumerate(probe) if isinstance(value, (int, float, np.number))]
+    stress_vectors = [probe.copy()]
+    for magnitude in (0.0, 1000.0, -1000.0, np.nan, np.inf):
+        vector = probe.copy()
+        for i in numeric_positions:
+            vector[i] = magnitude
+        stress_vectors.append(vector)
     for vec in stress_vectors:
         handled = _stress_vector_handled(model, vec)
         if not handled:
@@ -132,8 +134,8 @@ def evaluate_model(
     # ---- 5. reproducibility: same input -> same output, N times ---------- #
     reproducible = True
     if artifact_loads:
-        probe = np.array([5.1, 3.5, 1.4, 0.2], dtype=float)
         first = _predict_safe(model, probe)
+        reproducible = first is not None
         for _ in range(9):
             if _predict_safe(model, probe) != first:
                 reproducible = False
@@ -143,7 +145,7 @@ def evaluate_model(
     passed = bool(
         artifact_loads
         and accuracy is not None
-        and accuracy >= 0.5
+        and accuracy >= minimum_accuracy
         and stress_failures == 0
         and reproducible
         and fairness_passed
@@ -169,10 +171,11 @@ def run_quality_gate(
     y_test,
     sensitive=None,
     max_demographic_parity_gap: Optional[float] = None,
+    minimum_accuracy: float = 0.80,
 ) -> Dict[str, Any]:
     """Convenience entry point used by tests and CI."""
     model = load_model(artifact_path)
     report = evaluate_model(
-        model, X_test, y_test, sensitive, artifact_path, max_demographic_parity_gap
+        model, X_test, y_test, sensitive, artifact_path, max_demographic_parity_gap, minimum_accuracy
     )
     return report.to_dict()

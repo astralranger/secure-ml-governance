@@ -2,7 +2,7 @@
 import json
 import sqlite3
 
-con = sqlite3.connect("audit.db")
+con = sqlite3.connect("adult_audit.db")
 cur = con.cursor()
 
 total, errors, shadowed = cur.execute(

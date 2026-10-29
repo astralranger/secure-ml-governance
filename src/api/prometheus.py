@@ -12,7 +12,7 @@ def _label(value: object) -> str:
 def render_router_metrics(metrics: dict[str, Any]) -> str:
     """Render the router's snapshot in Prometheus text exposition format."""
     lines = [
-        "# HELP ml_governance_model_requests_total Inference requests by served model.",
+        "# HELP ml_governance_model_requests_total Inference requests by model, including shadow evaluations.",
         "# TYPE ml_governance_model_requests_total counter",
         "# HELP ml_governance_model_errors_total Failed inferences by served model.",
         "# TYPE ml_governance_model_errors_total counter",

@@ -37,7 +37,8 @@ from .security import (
     validate_prediction_payload,
 )
 from ..evaluation.drift_monitor import compute_drift
-from ..models.metadata import read_manifest
+from ..models.metadata import read_manifest, sha256_file
+from ..models.dataset import FEATURE_NAMES, SCHEMA_VERSION
 
 # ---------------------------------------------------------------------------
 # Paths & configuration
@@ -134,8 +135,8 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
 
     # ---- security middleware ------------------------------------------- #
     sec_cfg = config.get("security", {})
-    app.config["JWT_SECRET_KEY"] = sec_cfg.get(
-        "jwt_secret_key", os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")
+    app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY") or sec_cfg.get(
+        "jwt_secret_key", "dev-secret-change-me-min-32-bytes-for-hs256"
     )
     api_key_env = sec_cfg.get("api_key_env_var", "API_KEY")
     app.config["INFERENCE_API_KEY"] = os.getenv(api_key_env)
@@ -149,16 +150,22 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
     # ---- load models ---------------------------------------------------- #
     models_cfg = config.get("models", {})
     models: Dict[str, Any] = {}
+    manifest = read_manifest(MODEL_DIR / "model_summary.json")
     for name, info in models_cfg.items():
         # Artifacts are stored flat inside src/models/ - take the filename only,
         # so config paths like "src/models/v1.pkl" or "v1.pkl" both work.
         artifact = MODEL_DIR / Path(info.get("artifact", f"{name}.pkl")).name
         if artifact.exists():
+            record = (manifest or {}).get("models", {}).get(name, {})
+            if record.get("feature_schema_version") != SCHEMA_VERSION or record.get("artifact_sha256") != sha256_file(artifact):
+                raise ValueError(f"Artifact integrity/schema verification failed: {name}; retrain models")
             models[name] = joblib.load(artifact)
         else:
             print(f"[warn] artifact not found: {artifact} (model {name} unavailable)")
 
     router = TrafficRouter(config, models)
+    router.shadow_observer = audit_log
+    app.extensions["traffic_router"] = router
 
     # ---- audit database ------------------------------------------------- #
     audit_cfg = config.get("audit", {})
@@ -167,7 +174,7 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
         db_path = os.getenv("AUDIT_DB_PATH", str(BASE_DIR / configured_db_path))
         init_db(db_path)
 
-    baseline_path = BASE_DIR / audit_cfg.get("baseline_path", "src/models/iris_baseline.csv")
+    baseline_path = BASE_DIR / audit_cfg.get("baseline_path", "src/models/adult_baseline.csv")
     drift_window_size = int(audit_cfg.get("drift_window_size", 100))
     drift_min_samples = int(audit_cfg.get("drift_min_samples", 30))
     metadata_path = MODEL_DIR / "model_summary.json"
@@ -175,9 +182,8 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
     # ---- routes --------------------------------------------------------- #
     allowed_features = sec_cfg.get(
         "allowed_feature_names",
-        ["sepal_length", "sepal_width", "petal_length", "petal_width"],
+        FEATURE_NAMES,
     )
-    max_abs_value = float(sec_cfg.get("max_abs_feature_value", 1000.0))
 
     # Demo credentials (override via env in production)
     ADMIN_USER = os.getenv("ADMIN_USERNAME", "admin")
@@ -223,7 +229,6 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
             features_dict = validate_prediction_payload(
                 raw,
                 allowed_features=allowed_features,
-                max_abs_value=max_abs_value,
             )
         except SecurityError as exc:
             # audit the rejected request
@@ -243,9 +248,9 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
             return security_error_handler(exc)
 
         features = np.array(
-            [features_dict[f] for f in allowed_features], dtype=float
+            [np.nan if features_dict[f] is None else features_dict[f] for f in FEATURE_NAMES], dtype=object
         )
-        result, model_used = router.predict(features)
+        result, model_used = router.predict(features, {"request_id": request_id, "features": features_dict, "client_ip": request.remote_addr})
         inference_failed = "error" in result.get("prediction", {})
         status_code = 503 if inference_failed else 200
 
@@ -256,13 +261,15 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
                 "features": features_dict,
                 "prediction": result.get("prediction", {}),
                 "latency_ms": result.get("latency_ms"),
-                "shadow": result.get("shadow", False),
+                "shadow": False,  # this row is the served response; shadow has its own row
                 "error": inference_failed,
                 "request_id": request_id,
                 "http_status": status_code,
             }
         )
         result["request_id"] = request_id
+        if not inference_failed:
+            result["prediction"]["income_label"] = {0: "<=50K", 1: ">50K"}[result["prediction"]["prediction"]]
         if inference_failed:
             result["error"] = "inference_failed"
         return jsonify(result), status_code
@@ -293,7 +300,33 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
     @app.get("/config")
     @require_auth
     def config_view():
-        return jsonify(config), 200
+        public_config = json.loads(json.dumps(config))
+        public_config.get("security", {}).pop("jwt_secret_key", None)
+        return jsonify(public_config), 200
+
+    @app.post("/admin/routing")
+    @require_auth
+    def update_routing():
+        """Change traffic in a running process after validating the loaded candidate."""
+        body = parse_json_body(request)
+        if not isinstance(body, dict) or set(body) - {"v2_weight", "shadow_mode", "shadow_percentage"}:
+            raise SecurityError("Expected v2_weight, shadow_mode and/or shadow_percentage")
+        weight = body.get("v2_weight", config["models"]["v2"]["weight"])
+        percentage = body.get("shadow_percentage", int(router.shadow_percentage))
+        mode = body.get("shadow_mode", router.shadow_mode)
+        if type(weight) is not int or not 0 <= weight <= 100:
+            raise SecurityError("v2_weight must be an integer from 0 to 100")
+        if type(percentage) is not int or not 0 <= percentage <= 100 or type(mode) is not bool:
+            raise SecurityError("shadow_percentage must be an integer from 0 to 100; shadow_mode must be boolean")
+        if (weight > 0 or mode) and ("v2" not in models or not manifest.get("models", {}).get("v2", {}).get("quality_gate", {}).get("passed")):
+            return jsonify({"error": "candidate_not_admitted"}), 409
+        router.set_weights({"v1": 100 - weight, "v2": weight})
+        router.shadow_mode = mode
+        router.shadow_percentage = percentage
+        config["models"]["v1"]["weight"] = 100 - weight
+        config["models"]["v2"]["weight"] = weight
+        config["routing"].update(shadow_mode=mode, shadow_percentage=percentage)
+        return jsonify(router.get_metrics()), 200
 
     @app.get("/drift")
     @require_auth
@@ -310,13 +343,14 @@ def create_app(config_path: str = str(CONFIG_PATH)) -> Flask:
         try:
             rows = session.execute(
                 select(PredictionLog.features)
-                .where(PredictionLog.error == 0)
+                .where(PredictionLog.error == 0, PredictionLog.shadow == 0)
                 .order_by(PredictionLog.id.desc())
                 .limit(window)
             ).scalars().all()
         finally:
             session.close()
         live_rows = [json.loads(row) for row in reversed(rows)]
+        live_rows = [row for row in live_rows if set(row) == set(FEATURE_NAMES)]
         if len(live_rows) < drift_min_samples:
             return jsonify({
                 "status": "insufficient_data",

@@ -1,7 +1,7 @@
 """Component 4: Continuous Drift Monitoring.
 
 Computes statistical distance between live inference inputs and a training
-baseline using the two-sample Kolmogorov-Smirnov test (per feature). Optionally
+baseline using two-sample KS tests (numeric) and chi-square tests (categorical). Optionally
 generates an Evidently AI drift report when the `evidently` package is
 installed; otherwise falls back to pure SciPy statistics so the module works
 without heavy optional dependencies.
@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import ks_2samp
+from scipy.stats import ks_2samp, chi2_contingency
 
 
 @dataclass
@@ -23,8 +23,9 @@ class DriftResult:
     statistic: float
     p_value: float
     drift_detected: bool
-    baseline_mean: float
-    live_mean: float
+    baseline_mean: Optional[float]
+    live_mean: Optional[float]
+    test: str = "ks_2samp"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -65,6 +66,19 @@ def compute_drift(
 
     results: List[DriftResult] = []
     for feat in feature_names:
+        if not pd.api.types.is_numeric_dtype(baseline[feat]):
+            b_counts = baseline[feat].fillna("__MISSING__").value_counts()
+            l_counts = live[feat].fillna("__MISSING__").value_counts()
+            categories = b_counts.index.union(l_counts.index)
+            table = np.array([b_counts.reindex(categories, fill_value=0),
+                              l_counts.reindex(categories, fill_value=0)])
+            if table.shape[1] <= 1 or not table.sum(axis=1).all():
+                stat, p = 0.0, 1.0
+            else:
+                stat, p, _, _ = chi2_contingency(table)
+            results.append(DriftResult(feat, round(float(stat), 4), round(float(p), 6),
+                                       bool(p < alpha), None, None, "chi_square"))
+            continue
         b = baseline[feat].dropna().values
         l = live[feat].dropna().values
         if len(b) == 0 or len(l) == 0:

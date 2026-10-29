@@ -17,12 +17,8 @@ import urllib.error
 import urllib.request
 
 BASE = "http://127.0.0.1:5000"
-VALID = {
-    "sepal_length": 5.1,
-    "sepal_width": 3.5,
-    "petal_length": 1.4,
-    "petal_width": 0.2,
-}
+from src.models.dataset import EXAMPLE
+VALID = EXAMPLE.copy()
 
 TOKEN: str = ""
 
@@ -57,10 +53,10 @@ def main() -> None:
 
     section("3. Attacking the API (should all be rejected)")
     attacks = [
-        ("NULL feature (schema)", {**VALID, "sepal_length": None}),
+        ("NULL feature (schema)", {**VALID, "age": None}),
         ("Unknown feature (injection probe)", {**VALID, "credit_score": 720}),
-        ("Out-of-bounds magnitude (DoS)", {**VALID, "sepal_length": 1e6}),
-        ("Constant probe vector", {k: 7.0 for k in VALID}),
+        ("Out-of-bounds magnitude (DoS)", {**VALID, "age": 1e6}),
+        ("Invalid categories", {k: 7.0 for k in VALID}),
         ("No JWT (auth bypass)", VALID),
     ]
     for name, payload in attacks:
@@ -80,7 +76,7 @@ def main() -> None:
     print(f"  {json.dumps(body, indent=2)}")
 
     section("6. Audit trail (SQLite last 3 rows)")
-    con = sqlite3.connect("audit.db")
+    con = sqlite3.connect("adult_audit.db")
     for row in con.execute(
         "SELECT id, model_version, error, latency_ms FROM prediction_logs ORDER BY id DESC LIMIT 3"
     ):
